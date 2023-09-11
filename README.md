@@ -21,7 +21,7 @@ person := &Person{
 	Age:  -1,
 }
 
-tp, ta := xcel.NewTypeProvider(), xcel.NewTypeAdapter()
+ta, tp := xcel.NewTypeAdapter(), xcel.NewTypeProvider()
 
 obj, typ := xcel.NewObject(ta, tp, person, "Person")
 
@@ -71,10 +71,10 @@ xcel.RegisterObject(ta, tp, obj, typ, map[string]*types.FieldType{
 })
 
 env, _ := cel.NewEnv(
-	cel.Types(typ),
-	cel.Variable("obj", typ),
-	cel.CustomTypeAdapter(ta),
-	cel.CustomTypeProvider(tp),
+    cel.Types(typ),
+    cel.Variable("obj", typ),
+    cel.CustomTypeAdapter(ta),
+    cel.CustomTypeProvider(tp),
 )
 
 ast, _ := env.Compile("obj.name == 'test' && obj.age > 0")
@@ -82,7 +82,7 @@ ast, _ := env.Compile("obj.name == 'test' && obj.age > 0")
 prg, _ := env.Program(ast)
 
 out, _, _ := prg.Eval(map[string]any{
-	"obj": obj,
+    "obj": obj,
 })
 
 fmt.Println(out.Value())

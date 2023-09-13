@@ -18,8 +18,8 @@ type Object[T any] struct {
 
 // NewObject creates a new CEL value wrapper for a Go value
 // that can be used in expressions.
-func NewObject[T any](ta TypeAdapter, tp *TypeProvider, val T, name string) (*Object[T], *types.Type) {
-	return &Object[T]{Raw: val}, cel.ObjectType(name, traits.ReceiverType)
+func NewObject[T any](ta TypeAdapter, tp *TypeProvider, val T) (*Object[T], *types.Type) {
+	return &Object[T]{Raw: val}, cel.ObjectType(reflect.TypeOf(val).String(), traits.ReceiverType)
 }
 
 // ConvertToNative converts the CEL value wrapper to a native Go value.

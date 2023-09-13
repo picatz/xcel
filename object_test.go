@@ -23,7 +23,7 @@ func ExampleNewObject() {
 
 	ta, tp := xcel.NewTypeAdapter(), xcel.NewTypeProvider()
 
-	obj, typ := xcel.NewObject(ta, tp, person, "Person")
+	obj, typ := xcel.NewObject(ta, tp, person)
 
 	xcel.RegisterObject(ta, tp, obj, typ, map[string]*types.FieldType{
 		"name": {
@@ -95,6 +95,7 @@ type Example struct {
 	Tags     []string
 	Parent   *Example
 	Pressure float64
+	Fn       func(int) string
 }
 
 func TestNewObject(t *testing.T) {
@@ -110,9 +111,12 @@ func TestNewObject(t *testing.T) {
 			Tags: []string{"a", "b", "c"},
 		},
 		Pressure: 1.5,
+		Fn: func(i int) string {
+			return fmt.Sprintf("~%d~", i)
+		},
 	}
 
-	obj, typ := xcel.NewObject(ta, tp, ex, "Example")
+	obj, typ := xcel.NewObject(ta, tp, ex)
 
 	xcel.RegisterObject(ta, tp, obj, typ, map[string]*types.FieldType{
 		"name": {
@@ -196,7 +200,7 @@ func TestNewObject(t *testing.T) {
 					return nil, fmt.Errorf("celval: object is nil")
 				}
 
-				obj, _ := xcel.NewObject(ta, tp, x.Raw.Parent, "Example")
+				obj, _ := xcel.NewObject(ta, tp, x.Raw.Parent)
 
 				return obj, nil
 			}),
@@ -229,13 +233,26 @@ func TestNewObject(t *testing.T) {
 		cel.Variable("obj", typ),
 		cel.CustomTypeAdapter(ta),
 		cel.CustomTypeProvider(tp),
+		cel.Function("fn",
+			cel.MemberOverload(
+				"Example_int",
+				[]*cel.Type{typ, cel.IntType},
+				cel.StringType,
+				cel.BinaryBinding(func(arg1, arg2 ref.Val) ref.Val {
+					x := arg1.(*xcel.Object[*Example])
+					y := arg2.(types.Int)
+
+					return types.String(x.Raw.Fn(int(y)))
+				}),
+			),
+		),
 	)
 
 	if err != nil {
 		t.Fatalf("failed to create CEL environment: %v", err)
 	}
 
-	ast, iss := env.Compile("obj.name == 'test' && obj.age > 0 && ('test' in obj.tags) && obj.parent.name == 'root' && obj.pressure > 1.0")
+	ast, iss := env.Compile("obj.name == 'test' && obj.age > 0 && ('test' in obj.tags) && obj.parent.name == 'root' && obj.pressure > 1.0 && obj.fn(1) == '~1~'")
 	if iss.Err() != nil {
 		t.Fatalf("failed to compile CEL expression: %v", iss.Err())
 	}

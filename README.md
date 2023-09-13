@@ -23,7 +23,7 @@ person := &Person{
 
 ta, tp := xcel.NewTypeAdapter(), xcel.NewTypeProvider()
 
-obj, typ := xcel.NewObject(ta, tp, person, "Person")
+obj, typ := xcel.NewObject(ta, tp, person)
 
 xcel.RegisterObject(ta, tp, obj, typ, map[string]*types.FieldType{
 	"name": {

@@ -3,6 +3,7 @@ package xcel
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
@@ -18,7 +19,7 @@ type Object[T any] struct {
 
 // NewObject creates a new CEL value wrapper for a Go value
 // that can be used in expressions.
-func NewObject[T any](ta TypeAdapter, tp *TypeProvider, val T) (*Object[T], *types.Type) {
+func NewObject[T any](val T) (*Object[T], *types.Type) {
 	return &Object[T]{Raw: val}, cel.ObjectType(reflect.TypeOf(val).String(), traits.ReceiverType)
 }
 
@@ -67,4 +68,81 @@ func RegisterObject[T any](ta TypeAdapter, tp *TypeProvider, objt *Object[T], t 
 	RegisterType(tp, t)
 
 	RegisterStructType(tp, t.TypeName(), fields)
+}
+
+// NewFields returns a map[string]*types.FieldType for the given object type
+// wrapping a Go struct pointer value.
+func NewFields[T any](objt *Object[T]) map[string]*types.FieldType {
+	fields := map[string]*types.FieldType{}
+
+	// Get the struct from the pointer.
+	v := reflect.ValueOf(objt.Raw).Elem()
+
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+
+		// Get the field name.
+		name := v.Type().Field(i).Name
+
+		// Get the field value.
+		value := field.Interface()
+
+		var celType *types.Type
+
+		// Convert the field value to a CEL value, if possible, default to object.
+		switch value.(type) {
+		case string:
+			celType = types.StringType
+		case int:
+			celType = types.IntType
+		case float64:
+			celType = types.DoubleType
+		case bool:
+			celType = types.BoolType
+		case []string:
+			celType = types.NewListType(types.StringType)
+		default:
+			celType = cel.ObjectType(reflect.TypeOf(value).String(), traits.ReceiverType)
+		}
+
+		// Use lower case for the field name.
+		fields[strings.ToLower(name)] = &types.FieldType{
+			Type: celType,
+			IsSet: ref.FieldTester(func(target any) bool {
+				// If it's a field of a struct, get the struct.
+				x := target.(*Object[T]).Raw
+
+				v := reflect.ValueOf(x).Elem()
+
+				// Get index of the field.
+				f := v.FieldByName(name)
+
+				return !f.IsNil()
+			}),
+			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+				// If it's a field of a struct, get the struct.
+				x := target.(*Object[T]).Raw
+
+				v := reflect.ValueOf(x).Elem()
+
+				// Get index of the field.
+				f := v.FieldByName(name)
+
+				// Get the field value.
+				value := f.Interface()
+
+				vt, ok := value.(T)
+				if !ok {
+					return value, nil
+				}
+
+				// Create a CEL object from the field value.
+				obj, _ := NewObject(vt)
+
+				return obj, nil
+			}),
+		}
+	}
+
+	return fields
 }

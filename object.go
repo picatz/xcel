@@ -28,7 +28,7 @@ func (o *Object[T]) ConvertToNative(typeDesc reflect.Type) (any, error) {
 	if typeDesc == reflect.TypeOf(o.Raw) {
 		return o.Raw, nil
 	}
-	return nil, fmt.Errorf("celval: type conversion error from '%s' to '%s'", o.Type(), typeDesc)
+	return nil, fmt.Errorf("xcel: type conversion error from '%s' to '%s'", o.Type(), typeDesc)
 }
 
 // ConvertToType converts the CEL value wrapper to a CEL value of the specified type.
@@ -36,7 +36,7 @@ func (o *Object[T]) ConvertToType(typeValue ref.Type) ref.Val {
 	if typeValue == o.Type() {
 		return o
 	}
-	return types.NewErr("celval: type conversion error from '%s' to '%s'", o.Type(), typeValue)
+	return types.NewErr("xcel: type conversion error from '%s' to '%s'", o.Type(), typeValue)
 }
 
 // Equal returns true if the CEL value wrapper is equal to the specified CEL value.

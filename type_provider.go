@@ -1,6 +1,8 @@
 package xcel
 
 import (
+	"fmt"
+
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
 )
@@ -10,7 +12,7 @@ var _ types.Provider = &TypeProvider{}
 type TypeProvider struct {
 	Idents           map[string]ref.Val
 	Types            map[string]*types.Type
-	Stucts           map[string]map[string]*types.FieldType
+	Structs          map[string]map[string]*types.FieldType
 	StructFieldTypes map[string]map[string]*types.FieldType
 }
 
@@ -18,7 +20,7 @@ func NewTypeProvider() *TypeProvider {
 	return &TypeProvider{
 		Idents:           map[string]ref.Val{},
 		Types:            map[string]*types.Type{},
-		Stucts:           map[string]map[string]*types.FieldType{},
+		Structs:          map[string]map[string]*types.FieldType{},
 		StructFieldTypes: map[string]map[string]*types.FieldType{},
 	}
 }
@@ -42,13 +44,7 @@ func (tp *TypeProvider) FindStructType(structType string) (*types.Type, bool) {
 }
 
 func (tp *TypeProvider) FindStructFieldNames(structType string) ([]string, bool) {
-	if structType == "Example" {
-		return []string{
-			"name",
-		}, true
-	}
-
-	if t, ok := tp.Stucts[structType]; ok {
+	if t, ok := tp.Structs[structType]; ok {
 		var names []string
 		for name := range t {
 			names = append(names, name)
@@ -68,13 +64,13 @@ func (tp *TypeProvider) FindStructFieldType(messageType, fieldName string) (*typ
 }
 
 func (TypeProvider) NewValue(typeName string, fields map[string]ref.Val) ref.Val {
-	return types.NewErr("not implemented")
+	return types.NewErr(fmt.Sprintf("xcel: type provider new value for %q (%d fields) not implemented", typeName, len(fields)))
 }
 
 var DefaultTypeProvider = &TypeProvider{
 	Idents:           map[string]ref.Val{},
 	Types:            map[string]*types.Type{},
-	Stucts:           map[string]map[string]*types.FieldType{},
+	Structs:          map[string]map[string]*types.FieldType{},
 	StructFieldTypes: map[string]map[string]*types.FieldType{},
 }
 
@@ -87,7 +83,7 @@ func RegisterType(tp *TypeProvider, t *types.Type) {
 }
 
 func RegisterStructType(tp *TypeProvider, name string, fields map[string]*types.FieldType) {
-	tp.Stucts[name] = fields
+	tp.Structs[name] = fields
 	registerStructFieldType(tp, name, fields)
 }
 

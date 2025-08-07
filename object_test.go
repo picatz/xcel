@@ -82,6 +82,7 @@ func ExampleNewObject() {
 }
 
 type Example struct {
+	Nested
 	Name     string
 	Age      int
 	Tags     []string
@@ -89,6 +90,10 @@ type Example struct {
 	Pressure float64
 	Fn       func(int) string
 	Blob     []byte
+}
+
+type Nested struct {
+	Toto string
 }
 
 func TestNewObject(t *testing.T) {

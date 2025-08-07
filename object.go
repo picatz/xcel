@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
@@ -78,13 +79,38 @@ func NewFields[T any](objt *Object[T]) map[string]*types.FieldType {
 	// Get the struct from the pointer.
 	v := reflect.ValueOf(objt.Raw).Elem()
 
+	// Use a recursive helper function to handle nested structs
+	processFields[T](fields, v, "")
+
+	return fields
+}
+
+// processFields recursively processes fields of a struct, including nested ones.
+// It uses a prefix to build the full path for nested fields (e.g., "Address.City").
+func processFields[T any](fields map[string]*types.FieldType, v reflect.Value, prefix string) {
 	for i := 0; i < v.NumField(); i++ {
 		field := v.Field(i)
+		fieldType := v.Type().Field(i)
+		name := fieldType.Name
 
-		// Get the field name.
-		name := v.Type().Field(i).Name
+		// Check if the field is a struct (and not a time.Time, which is a common struct but should be treated as a primitive).
+		if field.Kind() == reflect.Struct && fieldType.Type != reflect.TypeOf(time.Time{}) {
+			// If it's a nested struct, recurse.
+			newPrefix := name
+			if prefix != "" {
+				newPrefix = prefix + "." + name
+			}
+			processFields[T](fields, field, newPrefix)
+			continue
+		}
 
-		// Get the field value.
+		// Build the full field name (e.g., "Address.City").
+		fullName := name
+		if prefix != "" {
+			fullName = prefix + "." + name
+		}
+
+		// Get the field value for CEL type conversion.
 		value := field.Interface()
 
 		var celType *types.Type
@@ -108,41 +134,59 @@ func NewFields[T any](objt *Object[T]) map[string]*types.FieldType {
 		// Use lower case for the field name.
 		fields[strings.ToLower(name)] = &types.FieldType{
 			Type: celType,
-			IsSet: ref.FieldTester(func(target any) bool {
-				// If it's a field of a struct, get the struct.
+			IsSet: func(target any) bool {
+				// Navigate to the correct field using the full path.
+				x := reflect.ValueOf(target.(*Object[T]).Raw).Elem()
+				f := getNestedField(x, fullName)
+
+				if !f.IsValid() {
+					return false
+				}
+				switch f.Kind() {
+				case reflect.Ptr, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan, reflect.Interface:
+					return !f.IsNil()
+				default:
+					return true
+				}
+			},
+			GetFrom: func(target any) (any, error) {
+				// Navigate to the correct field using the full path.
 				x := target.(*Object[T]).Raw
 
-				v := reflect.ValueOf(x).Elem()
+				v2 := reflect.ValueOf(x).Elem()
 
 				// Get index of the field.
-				f := v.FieldByName(name)
+				f := getNestedField(v2, fullName)
 
-				return !f.IsNil()
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
-				// If it's a field of a struct, get the struct.
-				x := target.(*Object[T]).Raw
-
-				v := reflect.ValueOf(x).Elem()
-
-				// Get index of the field.
-				f := v.FieldByName(name)
+				if !f.IsValid() {
+					return nil, fmt.Errorf("field %s not found", fullName)
+				}
 
 				// Get the field value.
-				value := f.Interface()
+				value2 := f.Interface()
 
-				vt, ok := value.(T)
+				vt, ok := value2.(T)
 				if !ok {
-					return value, nil
+					return value2, nil
 				}
 
 				// Create a CEL object from the field value.
 				obj, _ := NewObject(vt)
 
 				return obj, nil
-			}),
+			},
 		}
 	}
+}
 
-	return fields
+// getNestedField navigates a struct path to find a nested field.
+func getNestedField(v reflect.Value, path string) reflect.Value {
+	parts := strings.Split(path, ".")
+	for _, part := range parts {
+		v = v.FieldByName(part)
+		if !v.IsValid() {
+			return reflect.Value{}
+		}
+	}
+	return v
 }

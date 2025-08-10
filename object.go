@@ -322,6 +322,11 @@ func processImmediateFields[T any](fields map[string]*types.FieldType, v reflect
 			// to keep consistency with NewObject / RegisterType.
 			name := fieldNameFor(ft)
 
+			// Fail fast on name collisions before building nested metadata.
+			if _, exists := fields[name]; exists {
+				panic(fmt.Sprintf("xcel: field name collision for CEL name '%s' on %s (Go field: %s)", name, rootType, ft.Name))
+			}
+
 			// Ensure we get a pointer to the nested struct for consistent typing.
 			ptr := fieldValue
 			if fieldValue.Kind() != reflect.Ptr {
@@ -336,9 +341,6 @@ func processImmediateFields[T any](fields map[string]*types.FieldType, v reflect
 			_, nestedCELType := NewObject(ptr.Interface())
 
 			sf := ft // capture for closure and diagnostics
-			if _, exists := fields[name]; exists {
-				panic(fmt.Sprintf("xcel: field name collision for CEL name '%s' on %s (Go field: %s)", name, rootType, sf.Name))
-			}
 			fields[name] = &types.FieldType{
 				Type: nestedCELType,
 				IsSet: func(target any) bool {

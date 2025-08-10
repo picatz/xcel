@@ -3,6 +3,7 @@ package xcel_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
@@ -83,13 +84,17 @@ func ExampleNewObject() {
 
 type Example struct {
 	Nested
-	Name     string
-	Age      int
-	Tags     []string
-	Parent   *Example
-	Pressure float64
-	Fn       func(int) string
-	Blob     []byte
+	NamedNested Nested
+	Name        string
+	Age         int
+	Tags        []string
+	Parent      *Example
+	Pressure    float64
+	Fn          func(int) string
+	Blob        []byte
+	CreatedAt   time.Time
+	UpdatedAt   *time.Time
+	ExpiresAt   time.Time
 }
 
 type Nested struct {
@@ -113,6 +118,10 @@ func TestNewObject(t *testing.T) {
 			return fmt.Sprintf("~%d~", i)
 		},
 	}
+	ex.CreatedAt = time.Date(2025, 8, 1, 12, 0, 0, 0, time.UTC)
+	ua := time.Date(2025, 8, 1, 13, 0, 0, 0, time.UTC)
+	ex.UpdatedAt = &ua
+	ex.ExpiresAt = time.Date(2025, 8, 2, 12, 0, 0, 0, time.UTC)
 
 	obj, typ := xcel.NewObject(ex)
 
@@ -224,6 +233,48 @@ func TestNewObject(t *testing.T) {
 				return x.Raw.Pressure, nil
 			}),
 		},
+		"created_at": {
+			Type: types.TimestampType,
+			IsSet: ref.FieldTester(func(target any) bool {
+				x := target.(*xcel.Object[*Example])
+				return x.Raw != nil && !x.Raw.CreatedAt.IsZero()
+			}),
+			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+				x := target.(*xcel.Object[*Example])
+				if x.Raw == nil {
+					return nil, fmt.Errorf("celval: object is nil")
+				}
+				return types.Timestamp{Time: x.Raw.CreatedAt}, nil
+			}),
+		},
+		"updated_at": {
+			Type: types.TimestampType,
+			IsSet: ref.FieldTester(func(target any) bool {
+				x := target.(*xcel.Object[*Example])
+				return x.Raw != nil && x.Raw.UpdatedAt != nil && !x.Raw.UpdatedAt.IsZero()
+			}),
+			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+				x := target.(*xcel.Object[*Example])
+				if x.Raw == nil || x.Raw.UpdatedAt == nil {
+					return nil, fmt.Errorf("celval: object or updated_at is nil")
+				}
+				return types.Timestamp{Time: *x.Raw.UpdatedAt}, nil
+			}),
+		},
+		"expires_at": {
+			Type: types.TimestampType,
+			IsSet: ref.FieldTester(func(target any) bool {
+				x := target.(*xcel.Object[*Example])
+				return x.Raw != nil && !x.Raw.ExpiresAt.IsZero()
+			}),
+			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+				x := target.(*xcel.Object[*Example])
+				if x.Raw == nil {
+					return nil, fmt.Errorf("celval: object is nil")
+				}
+				return types.Timestamp{Time: x.Raw.ExpiresAt}, nil
+			}),
+		},
 	})
 
 	env, err := cel.NewEnv(
@@ -250,7 +301,7 @@ func TestNewObject(t *testing.T) {
 		t.Fatalf("failed to create CEL environment: %v", err)
 	}
 
-	ast, iss := env.Compile("obj.name == 'test' && obj.age > 0 && ('test' in obj.tags) && obj.parent.name == 'root' && obj.pressure > 1.0 && obj.fn(1) == '~1~'")
+	ast, iss := env.Compile("obj.name == 'test' && obj.age > 0 && ('test' in obj.tags) && obj.parent.name == 'root' && obj.pressure > 1.0 && obj.fn(1) == '~1~' && has(obj.created_at) && has(obj.updated_at) && obj.updated_at > obj.created_at && obj.expires_at > obj.created_at")
 	if iss.Err() != nil {
 		t.Fatalf("failed to compile CEL expression: %v", iss.Err())
 	}
@@ -290,6 +341,10 @@ func TestNewObjectAndFields(t *testing.T) {
 		},
 		Blob: []byte("test"),
 	}
+	ex.CreatedAt = time.Date(2025, 8, 1, 12, 0, 0, 0, time.UTC)
+	ua := time.Date(2025, 8, 1, 13, 0, 0, 0, time.UTC)
+	ex.UpdatedAt = &ua
+	ex.ExpiresAt = time.Date(2025, 8, 2, 12, 0, 0, 0, time.UTC)
 
 	obj, typ := xcel.NewObject(ex)
 
@@ -319,7 +374,7 @@ func TestNewObjectAndFields(t *testing.T) {
 		t.Fatalf("failed to create CEL environment: %v", err)
 	}
 
-	ast, iss := env.Compile("obj.name == 'test' && obj.age > 0 && ('test' in obj.tags) && obj.parent.name == 'root' && obj.pressure > 1.0 && obj.fn(1) == '~1~' && has(obj.blob)")
+	ast, iss := env.Compile("obj.name == 'test' && obj.age > 0 && ('test' in obj.tags) && obj.parent.name == 'root' && obj.pressure > 1.0 && obj.fn(1) == '~1~' && has(obj.blob) && has(obj.created_at) && has(obj.updated_at) && obj.updated_at > obj.created_at && obj.expires_at > obj.created_at")
 	if iss.Err() != nil {
 		t.Fatalf("failed to compile CEL expression: %v", iss.Err())
 	}
@@ -338,6 +393,95 @@ func TestNewObjectAndFields(t *testing.T) {
 
 	if fmt.Sprintf("%v", out.Value()) != "true" {
 		t.Fatalf("expected 'true' but got '%v'", out.Value())
+	}
+}
+
+func TestNewObjectNestedFields(t *testing.T) {
+	tests := []struct {
+		name       string
+		expr       string
+		checkValue func(t *testing.T, v any)
+	}{
+		{
+			name: "access tested field",
+			expr: "obj.toto == 'toto'",
+			checkValue: func(t *testing.T, out any) {
+				if fmt.Sprintf("%v", out) != "true" {
+					t.Errorf("expected 'true' but got '%v'", out)
+				}
+			},
+		},
+		{
+			name: "access named nested field",
+			expr: "obj.named_nested.toto == 'titi'",
+			checkValue: func(t *testing.T, out any) {
+				if fmt.Sprintf("%v", out) != "true" {
+					t.Errorf("expected 'true' but got '%v'", out)
+				}
+			},
+		},
+		{
+			name: "timestamp presence and ordering",
+			expr: "has(obj.created_at) && has(obj.updated_at) && obj.updated_at > obj.created_at",
+			checkValue: func(t *testing.T, out any) {
+				if fmt.Sprintf("%v", out) != "true" {
+					t.Errorf("expected 'true' but got '%v'", out)
+				}
+			},
+		},
+	}
+
+	ta, tp := xcel.NewTypeAdapter(), xcel.NewTypeProvider()
+
+	ex := &Example{
+		Nested: Nested{
+			Toto: "toto",
+		},
+		NamedNested: Nested{
+			Toto: "titi",
+		},
+		Name: "test",
+		Age:  1,
+	}
+	ex.CreatedAt = time.Date(2025, 8, 1, 12, 0, 0, 0, time.UTC)
+	ua := time.Date(2025, 8, 1, 13, 0, 0, 0, time.UTC)
+	ex.UpdatedAt = &ua
+	ex.ExpiresAt = time.Date(2025, 8, 2, 12, 0, 0, 0, time.UTC)
+
+	obj, typ := xcel.NewObject(ex)
+
+	xcel.RegisterObject(ta, tp, obj, typ, xcel.NewFields(obj))
+
+	env, err := cel.NewEnv(
+		cel.Types(typ),
+		cel.Variable("obj", typ),
+		cel.CustomTypeAdapter(ta),
+		cel.CustomTypeProvider(tp),
+	)
+
+	if err != nil {
+		t.Fatalf("failed to create CEL environment: %v", err)
+	}
+
+	for _, test := range tests {
+		ast, iss := env.Compile(test.expr)
+		if iss.Err() != nil {
+			t.Fatalf("failed to compile CEL expression: %v", iss.Err())
+		}
+
+		prg, err := env.Program(ast)
+		if err != nil {
+			t.Fatalf("failed to create CEL program: %v", err)
+		}
+
+		out, _, err := prg.Eval(map[string]interface{}{
+			"obj": obj,
+		})
+		if err != nil {
+			t.Fatalf("failed to evaluate program: %v", err)
+		}
+
+		test.checkValue(t, out.Value())
 	}
 }
 

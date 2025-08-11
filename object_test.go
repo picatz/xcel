@@ -8,7 +8,11 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
+	tracerexectype "github.com/inspektor-gadget/inspektor-gadget/pkg/gadgets/trace/exec/types"
+	eventtypes "github.com/inspektor-gadget/inspektor-gadget/pkg/types"
+	"github.com/kubescape/node-agent/pkg/ebpf/events"
 	"github.com/picatz/xcel"
+	"github.com/stretchr/testify/require"
 )
 
 func ExampleNewObject() {
@@ -488,6 +492,71 @@ func TestNewObjectNestedFields(t *testing.T) {
 
 			test.checkValue(t, out.Value())
 		})
+	}
+}
+
+func TestNewObjectWithEvent(t *testing.T) {
+	ta, tp := xcel.NewTypeAdapter(), xcel.NewTypeProvider()
+
+	ex := &events.EnrichedEvent{
+		Event: &events.ExecEvent{
+			Event: tracerexectype.Event{
+				Event: eventtypes.Event{
+					CommonData: eventtypes.CommonData{
+						K8s: eventtypes.K8sMetadata{
+							BasicK8sMetadata: eventtypes.BasicK8sMetadata{
+								ContainerName: "test",
+							},
+						},
+						Runtime: eventtypes.BasicRuntimeMetadata{
+							ContainerID: "test",
+						},
+					},
+				},
+				Pid:     1234,
+				Comm:    "test-process",
+				Pcomm:   "test-process",
+				ExePath: "/usr/bin/test-process",
+				Args:    []string{"test-process", "arg1"},
+			},
+		},
+	}
+
+	obj, typ := xcel.NewObject(ex)
+
+	xcel.RegisterObject(ta, tp, obj, typ, xcel.NewFields(obj))
+
+	env, err := cel.NewEnv(
+		cel.Types(typ),
+		cel.Variable("obj", typ),
+		cel.CustomTypeAdapter(ta),
+		cel.CustomTypeProvider(tp),
+	)
+
+	if err != nil {
+		t.Fatalf("failed to create CEL environment: %v", err)
+	}
+
+	require.Equal(t, "test", ex.Event.(*events.ExecEvent).Event.CommonData.Runtime.ContainerID)
+	ast, iss := env.Compile("obj.event.event.common_data.runtime.container_id == 'test'")
+	if iss.Err() != nil {
+		t.Fatalf("failed to compile CEL expression: %v", iss.Err())
+	}
+
+	prg, err := env.Program(ast)
+	if err != nil {
+		t.Fatalf("failed to create CEL program: %v", err)
+	}
+
+	out, _, err := prg.Eval(map[string]interface{}{
+		"obj": obj,
+	})
+	if err != nil {
+		t.Fatalf("failed to evaluate program: %v", err)
+	}
+
+	if fmt.Sprintf("%v", out.Value()) != "true" {
+		t.Fatalf("expected 'true' but got '%v'", out.Value())
 	}
 }
 

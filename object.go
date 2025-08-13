@@ -99,9 +99,6 @@ func celTypeForField(sf reflect.StructField) *types.Type {
 }
 
 // fieldNameFor returns the snake_case CEL field name for a Go struct field.
-func fieldNameFor(f reflect.StructField) string {
-	return toSnakeCase(f.Name)
-}
 
 // Object wraps a Go value for use as a CEL object. The wrapper type is used as the
 // CEL object type so member functions dispatch to the wrapper.
@@ -303,6 +300,11 @@ func processImmediateFields[T any](fields map[string]*types.FieldType, v reflect
 			continue
 		}
 
+		// Handle interface fields
+		if ft.Type.Kind() == reflect.Interface {
+			fieldValue = fieldValue.Elem() // dereference interface to get the concrete type
+		}
+
 		// Handle struct or pointer-to-struct fields specially (except time.Time which should
 		// behave like a primitive value).
 		underlying := ft.Type
@@ -311,77 +313,14 @@ func processImmediateFields[T any](fields map[string]*types.FieldType, v reflect
 		}
 		isStructLike := (fieldValue.Kind() == reflect.Struct) || (fieldValue.Kind() == reflect.Ptr && fieldValue.Elem().Kind() == reflect.Struct)
 		if isStructLike && underlying != goTimeType {
-			if ft.Anonymous {
-				// Promote embedded fields: make leaf fields available at this level
-				processPromotedFields[T](fields, fieldValue, ft.Name)
-				continue
-			}
-
-			// Named nested struct: expose it as an object at `fieldNameFor(name)` and let
-			// nested type registration provide its inner fields. Use the WRAPPER type
-			// to keep consistency with NewObject / RegisterType.
-			name := fieldNameFor(ft)
-
-			// Fail fast on name collisions before building nested metadata.
-			if _, exists := fields[name]; exists {
-				panic(fmt.Sprintf("xcel: field name collision for CEL name '%s' on %s (Go field: %s)", name, rootType, ft.Name))
-			}
-
-			// Ensure we get a pointer to the nested struct for consistent typing.
-			ptr := fieldValue
-			if fieldValue.Kind() != reflect.Ptr {
-				if fieldValue.CanAddr() {
-					ptr = fieldValue.Addr()
-				} else {
-					ptr = reflect.New(underlying)
-				}
-			}
-
-			// Derive the wrapper CEL type for this nested value.
-			_, nestedCELType := NewObject(ptr.Interface())
-
-			sf := ft // capture for closure and diagnostics
-			fields[name] = &types.FieldType{
-				Type: nestedCELType,
-				IsSet: func(target any) bool {
-					x := reflect.ValueOf(target.(*Object[T]).Raw)
-					if x.Kind() == reflect.Ptr {
-						x = x.Elem()
-					}
-					f := getNestedField(x, sf.Name)
-					if !f.IsValid() {
-						return false
-					}
-					return presenceIsSet(f, sf)
-				},
-				GetFrom: func(target any) (any, error) {
-					x := reflect.ValueOf(target.(*Object[T]).Raw)
-					if x.Kind() == reflect.Ptr {
-						x = x.Elem()
-					}
-					f := getNestedField(x, sf.Name)
-					if !f.IsValid() {
-						return nil, fmt.Errorf("field %s not found", sf.Name)
-					}
-					p := f
-					if f.Kind() != reflect.Ptr {
-						if f.CanAddr() {
-							p = f.Addr()
-						} else {
-							p = reflect.New(f.Type())
-							p.Elem().Set(f)
-						}
-					}
-					obj, _ := NewObject(p.Interface())
-					return obj, nil
-				},
-			}
+			// Promote embedded fields: make leaf fields available at this level
+			processPromotedFields[T](fields, fieldValue, ft.Name)
 			continue
 		}
 
 		// Primitive / non-struct field at this level.
-		name := fieldNameFor(ft)
 		fullPath := ft.Name
+		name := toSnakeCase(strings.ReplaceAll(fullPath, ".", "_"))
 
 		sf := ft // capture for closure
 		if _, exists := fields[name]; exists {
@@ -438,15 +377,13 @@ func processPromotedFields[T any](fields map[string]*types.FieldType, v reflect.
 
 		// Build the reflection path like "Nested.Field".
 		fullPath := prefix + "." + ft.Name
-		name := fieldNameFor(ft)
+		name := toSnakeCase(strings.ReplaceAll(fullPath, ".", "_"))
 
 		// Only register leaf / non-structs here; named nested structs should be
 		// reached through their parent field (which is not anonymous).
 		if fieldValue.Kind() == reflect.Struct && ft.Type != goTimeType {
-			// Recurse further for deeply anonymous embeddings.
-			if ft.Anonymous {
-				processPromotedFields[T](fields, fieldValue, prefix+"."+ft.Name)
-			}
+			// Recurse further for deeply embeddings.
+			processPromotedFields[T](fields, fieldValue, prefix+"."+ft.Name)
 			continue
 		}
 
@@ -496,10 +433,16 @@ func processPromotedFields[T any](fields map[string]*types.FieldType, v reflect.
 // following pointers as needed. It returns an invalid reflect.Value if the path
 // cannot be resolved to a struct field.
 func getNestedField(v reflect.Value, path string) reflect.Value {
+	if v.Kind() == reflect.Interface {
+		v = v.Elem() // dereference interface to get the concrete type
+	}
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
 	for _, part := range strings.Split(path, ".") {
+		if v.Kind() == reflect.Interface {
+			v = v.Elem() // dereference interface to get the concrete type
+		}
 		if v.Kind() == reflect.Ptr {
 			v = v.Elem()
 		}

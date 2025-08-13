@@ -1,8 +1,6 @@
 package xcel
 
 import (
-	"fmt"
-
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
 )
@@ -64,7 +62,7 @@ func (tp *TypeProvider) FindStructFieldType(messageType, fieldName string) (*typ
 }
 
 func (TypeProvider) NewValue(typeName string, fields map[string]ref.Val) ref.Val {
-	return types.NewErr(fmt.Sprintf("xcel: type provider new value for %q (%d fields) not implemented", typeName, len(fields)))
+	return types.NewErr("xcel: type provider new value for %q (%d fields) not implemented", typeName, len(fields))
 }
 
 var DefaultTypeProvider = &TypeProvider{

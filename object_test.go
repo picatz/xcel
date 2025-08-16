@@ -374,7 +374,7 @@ func TestNewObjectAndFields(t *testing.T) {
 		t.Fatalf("failed to create CEL environment: %v", err)
 	}
 
-	ast, iss := env.Compile("obj.name == 'test' && obj.age > 0 && ('test' in obj.tags) && obj.parent_name == 'root' && obj.pressure > 1.0 && obj.fn(1) == '~1~' && has(obj.blob) && has(obj.created_at) && has(obj.updated_at) && obj.updated_at > obj.created_at && obj.expires_at > obj.created_at")
+	ast, iss := env.Compile("obj.name == 'test' && obj.age > 0 && ('test' in obj.tags) && obj.parent.name == 'root' && obj.pressure > 1.0 && obj.fn(1) == '~1~' && has(obj.blob) && has(obj.created_at) && has(obj.updated_at) && obj.updated_at > obj.created_at && obj.expires_at > obj.created_at")
 	if iss.Err() != nil {
 		t.Fatalf("failed to compile CEL expression: %v", iss.Err())
 	}
@@ -403,8 +403,8 @@ func TestNewObjectNestedFields(t *testing.T) {
 		checkValue func(t *testing.T, v any)
 	}{
 		{
-			name: "access tested field",
-			expr: "obj.nested_toto == 'toto'",
+			name: "access embedded nested field",
+			expr: "obj.nested.toto == 'toto'",
 			checkValue: func(t *testing.T, out any) {
 				if fmt.Sprintf("%v", out) != "true" {
 					t.Errorf("expected 'true' but got '%v'", out)
@@ -413,7 +413,7 @@ func TestNewObjectNestedFields(t *testing.T) {
 		},
 		{
 			name: "access named nested field",
-			expr: "obj.named_nested_toto == 'titi'",
+			expr: "obj.named_nested.toto == 'titi'",
 			checkValue: func(t *testing.T, out any) {
 				if fmt.Sprintf("%v", out) != "true" {
 					t.Errorf("expected 'true' but got '%v'", out)
@@ -447,6 +447,10 @@ func TestNewObjectNestedFields(t *testing.T) {
 	ua := time.Date(2025, 8, 1, 13, 0, 0, 0, time.UTC)
 	ex.UpdatedAt = &ua
 	ex.ExpiresAt = time.Date(2025, 8, 2, 12, 0, 0, 0, time.UTC)
+
+	fmt.Println(ex.Toto)             // Through nested indirection
+	fmt.Println(ex.Nested.Toto)      // Through nested struct
+	fmt.Println(ex.NamedNested.Toto) // Through named nested struct
 
 	obj, typ := xcel.NewObject(ex)
 

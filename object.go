@@ -147,6 +147,42 @@ func (o *Object[T]) Value() any {
 	return o
 }
 
+// dynObject is a dynamic wrapper used for nested struct fields whose concrete
+// type parameter T is not known at compile time from this package. It carries a
+// custom CEL object type name so nested expressions can type-check and a raw
+// value used for reflection-based field access at evaluation time.
+type dynObject struct {
+	Raw      any
+	typeName string
+}
+
+func (o *dynObject) ConvertToNative(typeDesc reflect.Type) (any, error) {
+	if o.Raw != nil && typeDesc == reflect.TypeOf(o.Raw) {
+		return o.Raw, nil
+	}
+	return nil, fmt.Errorf("xcel: type conversion error from '%s' to '%s'", o.Type(), typeDesc)
+}
+
+func (o *dynObject) ConvertToType(typeValue ref.Type) ref.Val {
+	if typeValue == o.Type() {
+		return o
+	}
+	return types.NewErr("xcel: type conversion error from '%s' to '%s'", o.Type(), typeValue)
+}
+
+func (o *dynObject) Equal(other ref.Val) ref.Val {
+	if d, ok := other.(*dynObject); ok {
+		return types.Bool(reflect.DeepEqual(o.Raw, d.Raw))
+	}
+	return types.Bool(false)
+}
+
+func (o *dynObject) Type() ref.Type {
+	return cel.ObjectType(o.typeName, traits.ReceiverType)
+}
+
+func (o *dynObject) Value() any { return o }
+
 // RegisterObject registers objt and its type with the given adapter and provider.
 // It derives field metadata from reflection (optionally overlaid by fields),
 // registers the struct type, and registers reachable named nested struct types so
@@ -180,6 +216,16 @@ func RegisterObject[T any](ta TypeAdapter, tp *TypeProvider, objt *Object[T], t 
 
 	RegisterType(tp, t)
 	RegisterStructType(tp, t.TypeName(), fields)
+	// Also register under the underlying Go type name for compatibility with
+	// resolution paths which may refer to the native type name.
+	rt := reflect.TypeOf(objt.Raw)
+	for rt.Kind() == reflect.Ptr {
+		rt = rt.Elem()
+	}
+	altName := typeNameOf(rt)
+	RegisterType(tp, cel.ObjectType(altName, traits.ReceiverType))
+	RegisterStructType(tp, altName, fields)
+
 	registerNestedTypes(tp, objt.Raw, map[reflect.Type]struct{}{})
 }
 
@@ -218,40 +264,44 @@ func registerNestedTypes(tp *TypeProvider, raw any, visited map[reflect.Type]str
 			underlying = underlying.Elem()
 		}
 		isStructLike := (fieldValue.Kind() == reflect.Struct) || (fieldValue.Kind() == reflect.Ptr && fieldValue.Elem().Kind() == reflect.Struct)
-		if isStructLike && underlying != goTimeType && !ft.Anonymous {
-			// Build a pointer to the nested struct for consistent typing.
-			ptr := fieldValue
-			if fieldValue.Kind() != reflect.Ptr {
-				if fieldValue.CanAddr() {
-					ptr = fieldValue.Addr()
-				} else {
-					ptr = reflect.New(underlying)
-				}
+		if isStructLike && underlying != goTimeType {
+			// Register a unique CEL type name for this Go struct type.
+			tn := wrapperTypeNameFor(underlying)
+			// Build fields for the nested type using reflection on a zero value (shape only).
+			zeroPtr := reflect.New(underlying)
+			nestedFields := newFieldsFromRaw(zeroPtr.Interface())
+
+			// Register both wrapper-style and native Go type names so either can resolve,
+			// but don't overwrite if already provided by the caller.
+			if _, exists := tp.Structs[tn]; !exists {
+				RegisterType(tp, cel.ObjectType(tn, traits.ReceiverType))
+				RegisterStructType(tp, tn, nestedFields)
+			}
+			altName := typeNameOf(underlying)
+			if _, exists := tp.Structs[altName]; !exists {
+				RegisterType(tp, cel.ObjectType(altName, traits.ReceiverType))
+				RegisterStructType(tp, altName, nestedFields)
 			}
 
-			// Create a temporary object to compute its (wrapper) type and fields.
-			obj, nestedType := NewObject(ptr.Interface())
-			RegisterType(tp, nestedType)
-			RegisterStructType(tp, nestedType.TypeName(), newFields(obj))
-
-			// Recurse into the nested struct.
-			registerNestedTypes(tp, ptr.Interface(), visited)
+			// Recurse into further nested types
+			registerNestedTypes(tp, zeroPtr.Interface(), visited)
 		}
 	}
 }
 
 // NewFields returns CEL field metadata for the immediate fields of objt.
 func NewFields[T any](objt *Object[T]) map[string]*types.FieldType {
-	return newFields(objt)
+	return newFieldsFromRaw(objt.Raw)
 }
 
-func newFields[T any](objt *Object[T]) map[string]*types.FieldType {
+// newFieldsFromRaw builds field metadata for a raw Go value.
+func newFieldsFromRaw(raw any) map[string]*types.FieldType {
 	fields := map[string]*types.FieldType{}
-	v := reflect.ValueOf(objt.Raw)
+	v := reflect.ValueOf(raw)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
-	processImmediateFields[T](fields, v)
+	processImmediateFields(fields, v)
 	return fields
 }
 
@@ -278,7 +328,7 @@ func toSnakeCase(s string) string {
 // Anonymous embedded struct fields have their leaf fields promoted at this level.
 // Named struct fields are exposed as nested objects; their inner fields are
 // provided by separate nested type registration.
-func processImmediateFields[T any](fields map[string]*types.FieldType, v reflect.Value) {
+func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value) {
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
@@ -313,14 +363,66 @@ func processImmediateFields[T any](fields map[string]*types.FieldType, v reflect
 		}
 		isStructLike := (fieldValue.Kind() == reflect.Struct) || (fieldValue.Kind() == reflect.Ptr && fieldValue.Elem().Kind() == reflect.Struct)
 		if isStructLike && underlying != goTimeType {
-			// Promote embedded fields: make leaf fields available at this level
-			processPromotedFields[T](fields, fieldValue, ft.Name)
+			// Register the nested field itself for dot access.
+			nestedFieldName := toSnakeCase(ft.Name)
+			nestedTypeName := wrapperTypeNameFor(underlying)
+			if _, exists := fields[nestedFieldName]; !exists {
+				// Capture for closures
+				fullPath := ft.Name
+				fields[nestedFieldName] = &types.FieldType{
+					Type: cel.ObjectType(nestedTypeName, traits.ReceiverType),
+					IsSet: func(target any) bool {
+						x := extractRawValue(target)
+						if !x.IsValid() {
+							return false
+						}
+						f := getNestedField(x, fullPath)
+						if !f.IsValid() {
+							return false
+						}
+						// Struct value is always present; pointer must be non-nil.
+						if f.Kind() == reflect.Ptr {
+							return !f.IsNil()
+						}
+						return true
+					},
+					GetFrom: func(target any) (any, error) {
+						x := extractRawValue(target)
+						if !x.IsValid() {
+							return nil, fmt.Errorf("field %s not found", fullPath)
+						}
+						f := getNestedField(x, fullPath)
+						if !f.IsValid() {
+							return nil, fmt.Errorf("field %s not found", fullPath)
+						}
+						// Ensure we return a pointer to the struct when possible.
+						fv := f
+						if fv.Kind() != reflect.Ptr {
+							if fv.CanAddr() {
+								fv = fv.Addr()
+							} else {
+								// Create a new pointer to a zero value if address not available
+								newPtr := reflect.New(fv.Type())
+								newPtr.Elem().Set(fv)
+								fv = newPtr
+							}
+						}
+						return &dynObject{Raw: fv.Interface(), typeName: nestedTypeName}, nil
+					},
+				}
+			}
+
+			// If the field is anonymous (embedded), also promote its leaf fields
+			// to the parent for direct access, similar to Go field promotion.
+			if ft.Anonymous {
+				processPromotedFields(fields, fieldValue, ft.Name, true)
+			}
 			continue
 		}
 
 		// Primitive / non-struct field at this level.
 		fullPath := ft.Name
-		name := toSnakeCase(strings.ReplaceAll(fullPath, ".", "_"))
+		name := toSnakeCase(ft.Name)
 
 		sf := ft // capture for closure
 		if _, exists := fields[name]; exists {
@@ -330,9 +432,9 @@ func processImmediateFields[T any](fields map[string]*types.FieldType, v reflect
 		fields[name] = &types.FieldType{
 			Type: celTy,
 			IsSet: func(target any) bool {
-				x := reflect.ValueOf(target.(*Object[T]).Raw)
-				if x.Kind() == reflect.Ptr {
-					x = x.Elem()
+				x := extractRawValue(target)
+				if !x.IsValid() {
+					return false
 				}
 				f := getNestedField(x, fullPath)
 				if !f.IsValid() {
@@ -341,9 +443,9 @@ func processImmediateFields[T any](fields map[string]*types.FieldType, v reflect
 				return presenceIsSet(f, sf)
 			},
 			GetFrom: func(target any) (any, error) {
-				x := reflect.ValueOf(target.(*Object[T]).Raw)
-				if x.Kind() == reflect.Ptr {
-					x = x.Elem()
+				x := extractRawValue(target)
+				if !x.IsValid() {
+					return nil, fmt.Errorf("field %s not found", fullPath)
 				}
 				f := getNestedField(x, fullPath)
 				if !f.IsValid() {
@@ -360,7 +462,9 @@ func processImmediateFields[T any](fields map[string]*types.FieldType, v reflect
 
 // processPromotedFields promotes leaf fields from an anonymous embedded struct so
 // they are visible on the parent object while retaining reflection access via prefix.
-func processPromotedFields[T any](fields map[string]*types.FieldType, v reflect.Value, prefix string) {
+// If anonymous is true, exported leaf fields are exposed at the parent level with
+// their own names (snake_case), matching Go's field promotion behavior.
+func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, prefix string, anonymous bool) {
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
@@ -377,13 +481,14 @@ func processPromotedFields[T any](fields map[string]*types.FieldType, v reflect.
 
 		// Build the reflection path like "Nested.Field".
 		fullPath := prefix + "." + ft.Name
-		name := toSnakeCase(strings.ReplaceAll(fullPath, ".", "_"))
+		// Promote to parent level name for anonymous embedding.
+		name := toSnakeCase(ft.Name)
 
 		// Only register leaf / non-structs here; named nested structs should be
 		// reached through their parent field (which is not anonymous).
 		if fieldValue.Kind() == reflect.Struct && ft.Type != goTimeType {
 			// Recurse further for deeply embeddings.
-			processPromotedFields[T](fields, fieldValue, prefix+"."+ft.Name)
+			processPromotedFields(fields, fieldValue, prefix+"."+ft.Name, anonymous)
 			continue
 		}
 
@@ -395,15 +500,17 @@ func processPromotedFields[T any](fields map[string]*types.FieldType, v reflect.
 
 		sf := ft // capture for closure and diagnostics
 		if _, exists := fields[name]; exists {
-			panic(fmt.Sprintf("xcel: field name collision for CEL name '%s' on %s (Go field: %s)", name, v.Type(), sf.Name))
+			// In case of name collisions due to multiple embeddings, prefer the
+			// first occurrence and rely on explicit nested access to disambiguate.
+			continue
 		}
 		celTy := celTypeForField(sf)
 		fields[name] = &types.FieldType{
 			Type: celTy,
 			IsSet: func(target any) bool {
-				x := reflect.ValueOf(target.(*Object[T]).Raw)
-				if x.Kind() == reflect.Ptr {
-					x = x.Elem()
+				x := extractRawValue(target)
+				if !x.IsValid() {
+					return false
 				}
 				f := getNestedField(x, fullPath)
 				if !f.IsValid() {
@@ -412,9 +519,9 @@ func processPromotedFields[T any](fields map[string]*types.FieldType, v reflect.
 				return presenceIsSet(f, sf)
 			},
 			GetFrom: func(target any) (any, error) {
-				x := reflect.ValueOf(target.(*Object[T]).Raw)
-				if x.Kind() == reflect.Ptr {
-					x = x.Elem()
+				x := extractRawValue(target)
+				if !x.IsValid() {
+					return nil, fmt.Errorf("field %s not found", fullPath)
 				}
 				f := getNestedField(x, fullPath)
 				if !f.IsValid() {
@@ -470,4 +577,37 @@ func normalizeForCEL(fv reflect.Value) (any, bool) {
 		return types.Timestamp{Time: fv.Elem().Interface().(time.Time)}, true
 	}
 	return nil, false
+}
+
+// wrapperTypeNameFor returns the wrapper type name string used for a nested Go
+// struct type so it can be referenced in CEL type metadata. It always uses a
+// pointer to the struct type, e.g. "*xcel.Object[*pkg.Type]".
+func wrapperTypeNameFor(rt reflect.Type) string {
+	for rt.Kind() == reflect.Ptr {
+		rt = rt.Elem()
+	}
+	return "*xcel.Object[*" + typeNameOf(rt) + "]"
+}
+
+// extractRawValue extracts the underlying Go value from either *Object[T] or
+// *dynObject. It returns an invalid reflect.Value if not found.
+func extractRawValue(target any) reflect.Value {
+	rv := reflect.ValueOf(target)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return reflect.Value{}
+	}
+	f := rv.FieldByName("Raw")
+	if f.IsValid() {
+		if f.Kind() == reflect.Interface {
+			if f.IsNil() {
+				return reflect.Value{}
+			}
+			return reflect.ValueOf(f.Interface())
+		}
+		return reflect.ValueOf(f.Interface())
+	}
+	return reflect.Value{}
 }

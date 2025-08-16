@@ -352,6 +352,10 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 
 		// Handle interface fields
 		if ft.Type.Kind() == reflect.Interface {
+			// If the interface is nil, skip further processing for this field to avoid panic.
+			if fieldValue.IsNil() {
+				continue
+			}
 			fieldValue = fieldValue.Elem() // dereference interface to get the concrete type
 		}
 
@@ -594,6 +598,9 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 // cannot be resolved to a struct field.
 func getNestedField(v reflect.Value, path string) reflect.Value {
 	if v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return reflect.Value{}
+		}
 		v = v.Elem() // dereference interface to get the concrete type
 	}
 	if v.Kind() == reflect.Ptr {
@@ -601,6 +608,9 @@ func getNestedField(v reflect.Value, path string) reflect.Value {
 	}
 	for _, part := range strings.Split(path, ".") {
 		if v.Kind() == reflect.Interface {
+			if v.IsNil() {
+				return reflect.Value{}
+			}
 			v = v.Elem() // dereference interface to get the concrete type
 		}
 		if v.Kind() == reflect.Ptr {

@@ -29,12 +29,12 @@ func ExampleNewObject() {
 	xcel.RegisterObject(ta, tp, obj, typ, map[string]*types.FieldType{
 		"name": {
 			Type: types.StringType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Person])
 
 				return x.Raw != nil && x.Raw.Name != ""
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Person])
 
 				if x.Raw == nil {
@@ -42,16 +42,16 @@ func ExampleNewObject() {
 				}
 
 				return x.Raw.Name, nil
-			}),
+			},
 		},
 		"age": {
 			Type: types.IntType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Person])
 
 				return x.Raw != nil && x.Raw.Age >= 0
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Person])
 
 				if x.Raw == nil {
@@ -59,7 +59,7 @@ func ExampleNewObject() {
 				}
 
 				return x.Raw.Age, nil
-			}),
+			},
 		},
 	})
 
@@ -128,7 +128,7 @@ func TestNewObject(t *testing.T) {
 	xcel.RegisterObject(ta, tp, obj, typ, map[string]*types.FieldType{
 		"name": {
 			Type: types.StringType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				objW := target.(*xcel.Object[*Example])
 
 				if objW.Raw == nil || objW.Raw.Name == "" {
@@ -136,8 +136,8 @@ func TestNewObject(t *testing.T) {
 				}
 
 				return true
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				objW := target.(*xcel.Object[*Example])
 
 				if objW.Raw == nil {
@@ -145,11 +145,11 @@ func TestNewObject(t *testing.T) {
 				}
 
 				return objW.Raw.Name, nil
-			}),
+			},
 		},
 		"age": {
 			Type: types.IntType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil || x.Raw.Age < 0 {
@@ -157,8 +157,8 @@ func TestNewObject(t *testing.T) {
 				}
 
 				return true
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil {
@@ -166,11 +166,11 @@ func TestNewObject(t *testing.T) {
 				}
 
 				return x.Raw.Age, nil
-			}),
+			},
 		},
 		"tags": {
 			Type: types.NewListType(types.StringType),
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil || len(x.Raw.Tags) == 0 {
@@ -178,8 +178,8 @@ func TestNewObject(t *testing.T) {
 				}
 
 				return true
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil {
@@ -187,11 +187,11 @@ func TestNewObject(t *testing.T) {
 				}
 
 				return types.NewStringList(ta, x.Raw.Tags), nil
-			}),
+			},
 		},
 		"parent": {
 			Type: typ,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil || x.Raw.Parent == nil {
@@ -199,8 +199,8 @@ func TestNewObject(t *testing.T) {
 				}
 
 				return true
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil {
@@ -210,11 +210,11 @@ func TestNewObject(t *testing.T) {
 				obj, _ := xcel.NewObject(x.Raw.Parent)
 
 				return obj, nil
-			}),
+			},
 		},
 		"pressure": {
 			Type: types.DoubleType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil || x.Raw.Pressure <= 0 {
@@ -222,8 +222,8 @@ func TestNewObject(t *testing.T) {
 				}
 
 				return true
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil {
@@ -231,49 +231,49 @@ func TestNewObject(t *testing.T) {
 				}
 
 				return x.Raw.Pressure, nil
-			}),
+			},
 		},
 		"created_at": {
 			Type: types.TimestampType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 				return x.Raw != nil && !x.Raw.CreatedAt.IsZero()
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 				if x.Raw == nil {
 					return nil, fmt.Errorf("celval: object is nil")
 				}
 				return types.Timestamp{Time: x.Raw.CreatedAt}, nil
-			}),
+			},
 		},
 		"updated_at": {
 			Type: types.TimestampType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 				return x.Raw != nil && x.Raw.UpdatedAt != nil && !x.Raw.UpdatedAt.IsZero()
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 				if x.Raw == nil || x.Raw.UpdatedAt == nil {
 					return nil, fmt.Errorf("celval: object or updated_at is nil")
 				}
 				return types.Timestamp{Time: *x.Raw.UpdatedAt}, nil
-			}),
+			},
 		},
 		"expires_at": {
 			Type: types.TimestampType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 				return x.Raw != nil && !x.Raw.ExpiresAt.IsZero()
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 				if x.Raw == nil {
 					return nil, fmt.Errorf("celval: object is nil")
 				}
 				return types.Timestamp{Time: x.Raw.ExpiresAt}, nil
-			}),
+			},
 		},
 	})
 
@@ -403,8 +403,8 @@ func TestNewObjectNestedFields(t *testing.T) {
 		checkValue func(t *testing.T, v any)
 	}{
 		{
-			name: "access tested field",
-			expr: "obj.toto == 'toto'",
+			name: "access embedded nested field",
+			expr: "obj.nested.toto == 'toto'",
 			checkValue: func(t *testing.T, out any) {
 				if fmt.Sprintf("%v", out) != "true" {
 					t.Errorf("expected 'true' but got '%v'", out)
@@ -448,6 +448,10 @@ func TestNewObjectNestedFields(t *testing.T) {
 	ex.UpdatedAt = &ua
 	ex.ExpiresAt = time.Date(2025, 8, 2, 12, 0, 0, 0, time.UTC)
 
+	fmt.Println(ex.Toto)             // Through nested indirection
+	fmt.Println(ex.Nested.Toto)      // Through nested struct
+	fmt.Println(ex.NamedNested.Toto) // Through named nested struct
+
 	obj, typ := xcel.NewObject(ex)
 
 	xcel.RegisterObject(ta, tp, obj, typ, xcel.NewFields(obj))
@@ -464,24 +468,26 @@ func TestNewObjectNestedFields(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		ast, iss := env.Compile(test.expr)
-		if iss.Err() != nil {
-			t.Fatalf("failed to compile CEL expression: %v", iss.Err())
-		}
+		t.Run(test.name, func(t *testing.T) {
+			ast, iss := env.Compile(test.expr)
+			if iss.Err() != nil {
+				t.Fatalf("failed to compile CEL expression: %v", iss.Err())
+			}
 
-		prg, err := env.Program(ast)
-		if err != nil {
-			t.Fatalf("failed to create CEL program: %v", err)
-		}
+			prg, err := env.Program(ast)
+			if err != nil {
+				t.Fatalf("failed to create CEL program: %v", err)
+			}
 
-		out, _, err := prg.Eval(map[string]interface{}{
-			"obj": obj,
+			out, _, err := prg.Eval(map[string]interface{}{
+				"obj": obj,
+			})
+			if err != nil {
+				t.Fatalf("failed to evaluate program: %v", err)
+			}
+
+			test.checkValue(t, out.Value())
 		})
-		if err != nil {
-			t.Fatalf("failed to evaluate program: %v", err)
-		}
-
-		test.checkValue(t, out.Value())
 	}
 }
 
@@ -510,7 +516,7 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 	xcel.RegisterObject(ta, tp, obj, typ, map[string]*types.FieldType{
 		"name": {
 			Type: types.StringType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				objW := target.(*xcel.Object[*Example])
 
 				if objW.Raw == nil || objW.Raw.Name == "" {
@@ -518,8 +524,8 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				}
 
 				return true
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				objW := target.(*xcel.Object[*Example])
 
 				if objW.Raw == nil {
@@ -527,11 +533,11 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				}
 
 				return objW.Raw.Name, nil
-			}),
+			},
 		},
 		"age": {
 			Type: types.IntType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil || x.Raw.Age < 0 {
@@ -539,8 +545,8 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				}
 
 				return true
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil {
@@ -548,11 +554,11 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				}
 
 				return x.Raw.Age, nil
-			}),
+			},
 		},
 		"tags": {
 			Type: types.NewListType(types.StringType),
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil || len(x.Raw.Tags) == 0 {
@@ -560,8 +566,8 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				}
 
 				return true
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil {
@@ -569,11 +575,11 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				}
 
 				return types.NewStringList(ta, x.Raw.Tags), nil
-			}),
+			},
 		},
 		"parent": {
 			Type: typ,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil || x.Raw.Parent == nil {
@@ -581,8 +587,8 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				}
 
 				return true
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil {
@@ -592,11 +598,11 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				obj, _ := xcel.NewObject(x.Raw.Parent)
 
 				return obj, nil
-			}),
+			},
 		},
 		"pressure": {
 			Type: types.DoubleType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil || x.Raw.Pressure <= 0 {
@@ -604,8 +610,8 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				}
 
 				return true
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil {
@@ -613,11 +619,11 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				}
 
 				return x.Raw.Pressure, nil
-			}),
+			},
 		},
 		"blob": {
 			Type: types.BytesType,
-			IsSet: ref.FieldTester(func(target any) bool {
+			IsSet: func(target any) bool {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil || len(x.Raw.Blob) == 0 {
@@ -625,8 +631,8 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				}
 
 				return true
-			}),
-			GetFrom: ref.FieldGetter(func(target any) (any, error) {
+			},
+			GetFrom: func(target any) (any, error) {
 				x := target.(*xcel.Object[*Example])
 
 				if x.Raw == nil {
@@ -634,7 +640,7 @@ func BenchmarkNewObjectManualFields(b *testing.B) {
 				}
 
 				return types.Bytes(x.Raw.Blob), nil
-			}),
+			},
 		},
 	})
 

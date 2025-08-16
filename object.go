@@ -484,11 +484,64 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 		// Promote to parent level name for anonymous embedding.
 		name := toSnakeCase(ft.Name)
 
-		// Only register leaf / non-structs here; named nested structs should be
-		// reached through their parent field (which is not anonymous).
-		if fieldValue.Kind() == reflect.Struct && ft.Type != goTimeType {
-			// Recurse further for deeply embeddings.
-			processPromotedFields(fields, fieldValue, prefix+"."+ft.Name, anonymous)
+		// If this promoted field is itself a struct (and not time.Time), expose it
+		// as a nested object at the current level (e.g., "runtime"), mirroring Go
+		// field promotion, and only continue promoting through it if it is also
+		// anonymously embedded. Otherwise, do not promote its leaves.
+		underlying := ft.Type
+		if underlying.Kind() == reflect.Ptr {
+			underlying = underlying.Elem()
+		}
+		if (fieldValue.Kind() == reflect.Struct || (fieldValue.Kind() == reflect.Ptr && fieldValue.Elem().Kind() == reflect.Struct)) && underlying != goTimeType {
+			nestedFieldName := toSnakeCase(ft.Name)
+			nestedTypeName := wrapperTypeNameFor(underlying)
+
+			if _, exists := fields[nestedFieldName]; !exists {
+				fullPath := prefix + "." + ft.Name
+				fields[nestedFieldName] = &types.FieldType{
+					Type: cel.ObjectType(nestedTypeName, traits.ReceiverType),
+					IsSet: func(target any) bool {
+						x := extractRawValue(target)
+						if !x.IsValid() {
+							return false
+						}
+						f := getNestedField(x, fullPath)
+						if !f.IsValid() {
+							return false
+						}
+						if f.Kind() == reflect.Ptr {
+							return !f.IsNil()
+						}
+						return true
+					},
+					GetFrom: func(target any) (any, error) {
+						x := extractRawValue(target)
+						if !x.IsValid() {
+							return nil, fmt.Errorf("field %s not found", fullPath)
+						}
+						f := getNestedField(x, fullPath)
+						if !f.IsValid() {
+							return nil, fmt.Errorf("field %s not found", fullPath)
+						}
+						fv := f
+						if fv.Kind() != reflect.Ptr {
+							if fv.CanAddr() {
+								fv = fv.Addr()
+							} else {
+								newPtr := reflect.New(fv.Type())
+								newPtr.Elem().Set(fv)
+								fv = newPtr
+							}
+						}
+						return &dynObject{Raw: fv.Interface(), typeName: nestedTypeName}, nil
+					},
+				}
+			}
+
+			// Only continue promoting through anonymous embedded structs.
+			if ft.Anonymous {
+				processPromotedFields(fields, fieldValue, prefix+"."+ft.Name, true)
+			}
 			continue
 		}
 

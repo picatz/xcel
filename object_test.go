@@ -12,7 +12,6 @@ import (
 	eventtypes "github.com/inspektor-gadget/inspektor-gadget/pkg/types"
 	"github.com/kubescape/node-agent/pkg/ebpf/events"
 	"github.com/picatz/xcel"
-	"github.com/stretchr/testify/require"
 )
 
 func ExampleNewObject() {
@@ -537,8 +536,7 @@ func TestNewObjectWithEvent(t *testing.T) {
 		t.Fatalf("failed to create CEL environment: %v", err)
 	}
 
-	require.Equal(t, "test", ex.Event.(*events.ExecEvent).Event.CommonData.Runtime.ContainerID)
-	ast, iss := env.Compile("obj.event.event.common_data.runtime.container_id == 'test'")
+	ast, iss := env.Compile("obj.event.runtime.container_id == 'test'")
 	if iss.Err() != nil {
 		t.Fatalf("failed to compile CEL expression: %v", iss.Err())
 	}

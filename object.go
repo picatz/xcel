@@ -260,6 +260,14 @@ func registerNestedTypes(tp *TypeProvider, raw any, visited map[reflect.Type]str
 
 		// Treat struct or pointer-to-struct (excluding time.Time) as a named nested struct.
 		underlying := ft.Type
+		if underlying.Kind() == reflect.Interface {
+			// If the interface is nil, skip further processing for this field to avoid panic.
+			if fieldValue.IsNil() {
+				continue
+			}
+			fieldValue = fieldValue.Elem() // dereference interface to get the concrete type
+			underlying = fieldValue.Type()
+		}
 		if underlying.Kind() == reflect.Ptr {
 			underlying = underlying.Elem()
 		}
@@ -350,18 +358,17 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 			continue
 		}
 
-		// Handle interface fields
-		if ft.Type.Kind() == reflect.Interface {
+		// Handle struct or pointer-to-struct fields specially (except time.Time which should
+		// behave like a primitive value).
+		underlying := ft.Type
+		if underlying.Kind() == reflect.Interface {
 			// If the interface is nil, skip further processing for this field to avoid panic.
 			if fieldValue.IsNil() {
 				continue
 			}
 			fieldValue = fieldValue.Elem() // dereference interface to get the concrete type
+			underlying = fieldValue.Type()
 		}
-
-		// Handle struct or pointer-to-struct fields specially (except time.Time which should
-		// behave like a primitive value).
-		underlying := ft.Type
 		if underlying.Kind() == reflect.Ptr {
 			underlying = underlying.Elem()
 		}

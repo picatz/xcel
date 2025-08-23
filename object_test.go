@@ -101,6 +101,66 @@ type Nested struct {
 	Toto string
 }
 
+// K8sEvent is a minimal local replica of the external interface used only for
+// validating interface field handling.
+//
+// https://github.com/kubescape/node-agent/blob/7f1258f0de66ecedf8d7c0c2cd3e2d280d99d929/pkg/utils/events.go#L12-L16
+type K8sEvent interface {
+	GetPod() string
+	GetNamespace() string
+}
+
+// TestRuntime corresponds to BasicRuntimeMetadata (subset needed).
+type TestRuntime struct {
+	ContainerID string
+}
+
+// TestK8s corresponds to BasicK8sMetadata (subset needed).
+type TestK8s struct {
+	ContainerName string
+	Namespace     string
+}
+
+// TestCommonData groups runtime and k8s metadata; in the original chain this
+// data was reachable through anonymous embeddings culminating in an anonymous
+// CommonData, so we mimic by embedding this struct anonymously further down.
+type TestCommonData struct {
+	Runtime TestRuntime
+	K8s     TestK8s
+}
+
+// TestBase anonymously embeds TestCommonData so its leaf struct fields (Runtime,
+// K8s) are promoted upward through subsequent anonymous embeddings per the
+// reflection logic in xcel.
+type TestBase struct {
+	TestCommonData
+}
+
+// TestTraceEvent adds process-related data and anonymously embeds TestBase.
+type TestTraceEvent struct {
+	TestBase
+	Pid     uint64
+	ExePath string
+	Args    []string
+}
+
+func (t *TestTraceEvent) GetPod() string       { return t.TestCommonData.K8s.ContainerName }
+func (t *TestTraceEvent) GetNamespace() string { return t.TestCommonData.K8s.Namespace }
+
+// TestExecEvent anonymously embeds TestTraceEvent, continuing promotion.
+type TestExecEvent struct {
+	TestTraceEvent
+}
+
+// TestEnrichedEvent mirrors the external EnrichedEvent shape we rely on only
+// for the interface field `Event` whose dynamic underlying concrete type has
+// the anonymous embedding chain described above.
+//
+// https://github.com/kubescape/node-agent/blob/7f1258f0de66ecedf8d7c0c2cd3e2d280d99d929/pkg/ebpf/events/enriched_event.go#L21-L29
+type TestEnrichedEvent struct {
+	Event K8sEvent // interface field to exercise interface + struct handling
+}
+
 func TestNewObject(t *testing.T) {
 	ta, tp := xcel.NewTypeAdapter(), xcel.NewTypeProvider()
 
@@ -488,6 +548,59 @@ func TestNewObjectNestedFields(t *testing.T) {
 
 			test.checkValue(t, out.Value())
 		})
+	}
+}
+
+func TestNewObjectWithEvent(t *testing.T) {
+	ta, tp := xcel.NewTypeAdapter(), xcel.NewTypeProvider()
+
+	ex := &TestEnrichedEvent{
+		Event: &TestExecEvent{
+			TestTraceEvent: TestTraceEvent{
+				TestBase: TestBase{
+					TestCommonData: TestCommonData{
+						K8s:     TestK8s{ContainerName: "test"},
+						Runtime: TestRuntime{ContainerID: "test"},
+					},
+				},
+				Pid:     1234,
+				ExePath: "/usr/bin/test-process",
+				Args:    []string{"test-process", "arg1"},
+			},
+		},
+	}
+
+	// fmt.Println(ex.Event.(*TestExecEvent).Runtime.ContainerID)
+
+	obj, typ := xcel.NewObject(ex)
+	xcel.RegisterObject(ta, tp, obj, typ, xcel.NewFields(obj))
+
+	env, err := cel.NewEnv(
+		cel.Types(typ),
+		cel.Variable("obj", typ),
+		cel.CustomTypeAdapter(ta),
+		cel.CustomTypeProvider(tp),
+	)
+	if err != nil {
+		t.Fatalf("failed to create CEL environment: %v", err)
+	}
+
+	ast, iss := env.Compile("obj.event.runtime.container_id == 'test'")
+	if iss.Err() != nil {
+		t.Fatalf("failed to compile CEL expression: %v", iss.Err())
+	}
+
+	prg, err := env.Program(ast)
+	if err != nil {
+		t.Fatalf("failed to create CEL program: %v", err)
+	}
+
+	out, _, err := prg.Eval(map[string]interface{}{"obj": obj})
+	if err != nil {
+		t.Fatalf("failed to evaluate program: %v", err)
+	}
+	if fmt.Sprintf("%v", out.Value()) != "true" {
+		t.Fatalf("expected 'true' but got '%v'", out.Value())
 	}
 }
 

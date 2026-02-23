@@ -389,6 +389,7 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 			if _, exists := fields[nestedFieldName]; !exists {
 				// Capture for closures
 				fullPath := ft.Name
+				parts := strings.Split(fullPath, ".")
 				nestedCelType := cel.ObjectType(nestedTypeName, traits.ReceiverType)
 				fields[nestedFieldName] = &types.FieldType{
 					Type: nestedCelType,
@@ -397,7 +398,7 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 						if !x.IsValid() {
 							return false
 						}
-						f := getNestedField(x, fullPath)
+						f := getNestedField(x, parts)
 						if !f.IsValid() {
 							return false
 						}
@@ -412,7 +413,7 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 						if !x.IsValid() {
 							return nil, fmt.Errorf("field %s not found", fullPath)
 						}
-						f := getNestedField(x, fullPath)
+						f := getNestedField(x, parts)
 						if !f.IsValid() {
 							return nil, fmt.Errorf("field %s not found", fullPath)
 						}
@@ -443,6 +444,7 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 
 		// Primitive / non-struct field at this level.
 		fullPath := ft.Name
+		parts := strings.Split(fullPath, ".")
 		name := toSnakeCase(ft.Name)
 
 		sf := ft // capture for closure
@@ -457,7 +459,7 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 				if !x.IsValid() {
 					return false
 				}
-				f := getNestedField(x, fullPath)
+				f := getNestedField(x, parts)
 				if !f.IsValid() {
 					return false
 				}
@@ -468,7 +470,7 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 				if !x.IsValid() {
 					return nil, fmt.Errorf("field %s not found", fullPath)
 				}
-				f := getNestedField(x, fullPath)
+				f := getNestedField(x, parts)
 				if !f.IsValid() {
 					return nil, fmt.Errorf("field %s not found", fullPath)
 				}
@@ -502,6 +504,7 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 
 		// Build the reflection path like "Nested.Field".
 		fullPath := prefix + "." + ft.Name
+		parts := strings.Split(fullPath, ".")
 		// Promote to parent level name for anonymous embedding.
 		name := toSnakeCase(ft.Name)
 
@@ -519,6 +522,7 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 
 			if _, exists := fields[nestedFieldName]; !exists {
 				fullPath := prefix + "." + ft.Name
+				parts := strings.Split(fullPath, ".")
 				nestedCelType := cel.ObjectType(nestedTypeName, traits.ReceiverType)
 				fields[nestedFieldName] = &types.FieldType{
 					Type: nestedCelType,
@@ -527,7 +531,7 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 						if !x.IsValid() {
 							return false
 						}
-						f := getNestedField(x, fullPath)
+						f := getNestedField(x, parts)
 						if !f.IsValid() {
 							return false
 						}
@@ -541,7 +545,7 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 						if !x.IsValid() {
 							return nil, fmt.Errorf("field %s not found", fullPath)
 						}
-						f := getNestedField(x, fullPath)
+						f := getNestedField(x, parts)
 						if !f.IsValid() {
 							return nil, fmt.Errorf("field %s not found", fullPath)
 						}
@@ -587,7 +591,7 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 				if !x.IsValid() {
 					return false
 				}
-				f := getNestedField(x, fullPath)
+				f := getNestedField(x, parts)
 				if !f.IsValid() {
 					return false
 				}
@@ -598,7 +602,7 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 				if !x.IsValid() {
 					return nil, fmt.Errorf("field %s not found", fullPath)
 				}
-				f := getNestedField(x, fullPath)
+				f := getNestedField(x, parts)
 				if !f.IsValid() {
 					return nil, fmt.Errorf("field %s not found", fullPath)
 				}
@@ -611,10 +615,10 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 	}
 }
 
-// getNestedField returns the value at path (e.g., "Parent.Child.Field") within v,
-// following pointers as needed. It returns an invalid reflect.Value if the path
-// cannot be resolved to a struct field.
-func getNestedField(v reflect.Value, path string) reflect.Value {
+// getNestedField returns the value at the given path parts (e.g., ["Parent","Child","Field"])
+// within v, following pointers as needed. It returns an invalid reflect.Value if
+// the path cannot be resolved to a struct field.
+func getNestedField(v reflect.Value, parts []string) reflect.Value {
 	if v.Kind() == reflect.Interface {
 		if v.IsNil() {
 			return reflect.Value{}
@@ -624,7 +628,7 @@ func getNestedField(v reflect.Value, path string) reflect.Value {
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
-	for _, part := range strings.Split(path, ".") {
+	for _, part := range parts {
 		if v.Kind() == reflect.Interface {
 			if v.IsNil() {
 				return reflect.Value{}

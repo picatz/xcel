@@ -12,10 +12,8 @@ var _ types.Adapter = TypeAdapter{}
 type TypeAdapter map[reflect.Type]func(value any) ref.Val
 
 func (ta TypeAdapter) NativeToValue(value any) ref.Val {
-	for typ, fn := range ta {
-		if reflect.TypeOf(value) == typ {
-			return fn(value)
-		}
+	if fn, ok := ta[reflect.TypeOf(value)]; ok {
+		return fn(value)
 	}
 	return types.DefaultTypeAdapter.NativeToValue(value)
 }

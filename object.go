@@ -103,14 +103,16 @@ func celTypeForField(sf reflect.StructField) *types.Type {
 // Object wraps a Go value for use as a CEL object. The wrapper type is used as the
 // CEL object type so member functions dispatch to the wrapper.
 type Object[T any] struct {
-	Raw T
+	Raw     T
+	celType *types.Type
 }
 
 // NewObject returns a CEL wrapper for val and its CEL object type.
 func NewObject[T any](val T) (*Object[T], *types.Type) {
 	// Use the wrapper type as the CEL object type so member dispatch passes the
 	// wrapper (matching tests which assert *Object[T]).
-	return &Object[T]{Raw: val}, cel.ObjectType(wrapperTypeName[T](), traits.ReceiverType)
+	t := cel.ObjectType(wrapperTypeName[T](), traits.ReceiverType)
+	return &Object[T]{Raw: val, celType: t}, t
 }
 
 // ConvertToNative returns the underlying Go value when typeDesc matches the wrapped type.
@@ -139,6 +141,9 @@ func (o *Object[T]) Equal(other ref.Val) ref.Val {
 
 // Type returns the CEL type of the wrapper.
 func (o *Object[T]) Type() ref.Type {
+	if o.celType != nil {
+		return o.celType
+	}
 	return cel.ObjectType(wrapperTypeName[T](), traits.ReceiverType)
 }
 
@@ -154,6 +159,7 @@ func (o *Object[T]) Value() any {
 type dynObject struct {
 	Raw      any
 	typeName string
+	celType  *types.Type
 }
 
 func (o *dynObject) ConvertToNative(typeDesc reflect.Type) (any, error) {
@@ -178,6 +184,9 @@ func (o *dynObject) Equal(other ref.Val) ref.Val {
 }
 
 func (o *dynObject) Type() ref.Type {
+	if o.celType != nil {
+		return o.celType
+	}
 	return cel.ObjectType(o.typeName, traits.ReceiverType)
 }
 
@@ -380,8 +389,9 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 			if _, exists := fields[nestedFieldName]; !exists {
 				// Capture for closures
 				fullPath := ft.Name
+				nestedCelType := cel.ObjectType(nestedTypeName, traits.ReceiverType)
 				fields[nestedFieldName] = &types.FieldType{
-					Type: cel.ObjectType(nestedTypeName, traits.ReceiverType),
+					Type: nestedCelType,
 					IsSet: func(target any) bool {
 						x := extractRawValue(target)
 						if !x.IsValid() {
@@ -418,7 +428,7 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 								fv = newPtr
 							}
 						}
-						return &dynObject{Raw: fv.Interface(), typeName: nestedTypeName}, nil
+						return &dynObject{Raw: fv.Interface(), typeName: nestedTypeName, celType: nestedCelType}, nil
 					},
 				}
 			}
@@ -509,8 +519,9 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 
 			if _, exists := fields[nestedFieldName]; !exists {
 				fullPath := prefix + "." + ft.Name
+				nestedCelType := cel.ObjectType(nestedTypeName, traits.ReceiverType)
 				fields[nestedFieldName] = &types.FieldType{
-					Type: cel.ObjectType(nestedTypeName, traits.ReceiverType),
+					Type: nestedCelType,
 					IsSet: func(target any) bool {
 						x := extractRawValue(target)
 						if !x.IsValid() {
@@ -544,7 +555,7 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 								fv = newPtr
 							}
 						}
-						return &dynObject{Raw: fv.Interface(), typeName: nestedTypeName}, nil
+						return &dynObject{Raw: fv.Interface(), typeName: nestedTypeName, celType: nestedCelType}, nil
 					},
 				}
 			}

@@ -98,7 +98,9 @@ type Example struct {
 }
 
 type Nested struct {
-	Toto string
+	Toto    string
+	Level   int64
+	Enabled bool
 }
 
 // K8sEvent is a minimal local replica of the external interface used only for
@@ -472,6 +474,33 @@ func TestNewObjectNestedFields(t *testing.T) {
 			},
 		},
 		{
+			name: "promoted int field",
+			expr: "obj.level == 7",
+			checkValue: func(t *testing.T, out any) {
+				if fmt.Sprintf("%v", out) != "true" {
+					t.Errorf("expected 'true' but got '%v'", out)
+				}
+			},
+		},
+		{
+			name: "promoted int literal == field",
+			expr: "7 == obj.level",
+			checkValue: func(t *testing.T, out any) {
+				if fmt.Sprintf("%v", out) != "true" {
+					t.Errorf("expected 'true' but got '%v'", out)
+				}
+			},
+		},
+		{
+			name: "promoted bool field",
+			expr: "obj.enabled == true",
+			checkValue: func(t *testing.T, out any) {
+				if fmt.Sprintf("%v", out) != "true" {
+					t.Errorf("expected 'true' but got '%v'", out)
+				}
+			},
+		},
+		{
 			name: "access named nested field",
 			expr: "obj.named_nested.toto == 'titi'",
 			checkValue: func(t *testing.T, out any) {
@@ -495,7 +524,9 @@ func TestNewObjectNestedFields(t *testing.T) {
 
 	ex := &Example{
 		Nested: Nested{
-			Toto: "toto",
+			Toto:    "toto",
+			Level:   7,
+			Enabled: true,
 		},
 		NamedNested: Nested{
 			Toto: "titi",
@@ -881,4 +912,160 @@ func BenchmarkNewObjectReflectionFields(b *testing.B) {
 	}
 
 	b.StopTimer()
+}
+
+// AllPrimitives exercises every primitive kind handled by wrapForCEL.
+type AllPrimitives struct {
+	Name   string
+	Age    int64
+	Count  uint64
+	Score  float64
+	Active bool
+}
+
+// TestPreWrappedEquality verifies that field == literal AND literal == field
+// both evaluate correctly when GetFrom returns pre-wrapped cel-go types.
+func TestPreWrappedEquality(t *testing.T) {
+	ta, tp := xcel.NewTypeAdapter(), xcel.NewTypeProvider()
+
+	ap := &AllPrimitives{
+		Name:   "dns",
+		Age:    42,
+		Count:  100,
+		Score:  3.14,
+		Active: true,
+	}
+
+	obj, typ := xcel.NewObject(ap)
+	xcel.RegisterObject(ta, tp, obj, typ, xcel.NewFields(obj))
+
+	env, err := cel.NewEnv(
+		cel.Types(typ),
+		cel.Variable("obj", typ),
+		cel.CustomTypeAdapter(ta),
+		cel.CustomTypeProvider(tp),
+	)
+	if err != nil {
+		t.Fatalf("failed to create CEL environment: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		expr string
+	}{
+		{"field == literal string", `obj.name == "dns"`},
+		{"literal == field string", `"dns" == obj.name`},
+		{"field == literal int", `obj.age == 42`},
+		{"literal == field int", `42 == obj.age`},
+		{"field == literal uint", `obj.count == 100u`},
+		{"literal == field uint", `100u == obj.count`},
+		{"field == literal double", `obj.score == 3.14`},
+		{"literal == field double", `3.14 == obj.score`},
+		{"field == literal bool", `obj.active == true`},
+		{"literal == field bool", `true == obj.active`},
+		{"string contains", `obj.name.contains("dn")`},
+		{"string startsWith", `obj.name.startsWith("d")`},
+		{"string endsWith", `obj.name.endsWith("ns")`},
+		{"string matches", `obj.name.matches("^d.s$")`},
+		{"int comparison", `obj.age > 40`},
+		{"uint comparison", `obj.count >= 100u`},
+		{"double comparison", `obj.score < 4.0`},
+		{"bool negation", `obj.active != false`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ast, iss := env.Compile(tc.expr)
+			if iss.Err() != nil {
+				t.Fatalf("compile: %v", iss.Err())
+			}
+			prg, err := env.Program(ast)
+			if err != nil {
+				t.Fatalf("program: %v", err)
+			}
+			out, _, err := prg.Eval(map[string]any{"obj": obj})
+			if err != nil {
+				t.Fatalf("eval: %v", err)
+			}
+			if out.Value() != true {
+				t.Fatalf("expected true, got %v", out.Value())
+			}
+		})
+	}
+}
+
+// TestPreWrappedTypeAdapterPassthrough verifies that NativeToValue passes
+// through pre-wrapped ref.Val values without re-conversion.
+func TestPreWrappedTypeAdapterPassthrough(t *testing.T) {
+	ta := xcel.NewTypeAdapter()
+
+	cases := []struct {
+		name string
+		val  ref.Val
+	}{
+		{"String", types.String("hello")},
+		{"Int", types.Int(42)},
+		{"Uint", types.Uint(100)},
+		{"Double", types.Double(3.14)},
+		{"Bool", types.Bool(true)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ta.NativeToValue(tc.val)
+			if result != tc.val {
+				t.Fatalf("expected pass-through, got different value: %v vs %v", result, tc.val)
+			}
+		})
+	}
+}
+
+// BenchmarkEvalWithPrewrap benchmarks field access with pre-wrapped values
+// (reflection-based NewFields) to measure alloc reduction.
+func BenchmarkEvalWithPrewrap(b *testing.B) {
+	ta, tp := xcel.NewTypeAdapter(), xcel.NewTypeProvider()
+
+	ap := &AllPrimitives{
+		Name:   "dns",
+		Age:    42,
+		Count:  100,
+		Score:  3.14,
+		Active: true,
+	}
+
+	obj, typ := xcel.NewObject(ap)
+	xcel.RegisterObject(ta, tp, obj, typ, xcel.NewFields(obj))
+
+	env, err := cel.NewEnv(
+		cel.Types(typ),
+		cel.Variable("obj", typ),
+		cel.CustomTypeAdapter(ta),
+		cel.CustomTypeProvider(tp),
+	)
+	if err != nil {
+		b.Fatalf("failed to create CEL environment: %v", err)
+	}
+
+	ast, iss := env.Compile(`obj.name == "dns" && obj.age == 42 && obj.count == 100u && obj.score > 3.0 && obj.active == true`)
+	if iss.Err() != nil {
+		b.Fatalf("compile: %v", iss.Err())
+	}
+
+	prg, err := env.Program(ast)
+	if err != nil {
+		b.Fatalf("program: %v", err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		out, _, err := prg.Eval(map[string]any{"obj": obj})
+		if err != nil {
+			b.Fatalf("eval: %v", err)
+		}
+		if out.Value() != true {
+			b.Fatalf("expected true, got %v", out.Value())
+		}
+	}
 }

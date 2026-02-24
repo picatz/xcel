@@ -477,6 +477,9 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 				if v, ok := normalizeForCEL(f); ok {
 					return v, nil
 				}
+				if v, ok := wrapForCEL(f); ok {
+					return v, nil
+				}
 				return f.Interface(), nil
 			},
 		}
@@ -609,6 +612,9 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 				if v, ok := normalizeForCEL(f); ok {
 					return v, nil
 				}
+				if v, ok := wrapForCEL(f); ok {
+					return v, nil
+				}
 				return f.Interface(), nil
 			},
 		}
@@ -660,6 +666,24 @@ func normalizeForCEL(fv reflect.Value) (any, bool) {
 	// *time.Time
 	if fv.Kind() == reflect.Ptr && fv.Elem().IsValid() && fv.Elem().Type() == goTimeType {
 		return types.Timestamp{Time: fv.Elem().Interface().(time.Time)}, true
+	}
+	return nil, false
+}
+
+// wrapForCEL wraps a primitive reflect.Value as its corresponding cel-go ref.Val type.
+// Returns (nil, false) for non-primitive kinds.
+func wrapForCEL(f reflect.Value) (any, bool) {
+	switch f.Kind() {
+	case reflect.String:
+		return types.String(f.String()), true
+	case reflect.Bool:
+		return types.Bool(f.Bool()), true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return types.Int(f.Int()), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return types.Uint(f.Uint()), true
+	case reflect.Float32, reflect.Float64:
+		return types.Double(f.Float()), true
 	}
 	return nil, false
 }

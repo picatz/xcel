@@ -103,14 +103,16 @@ func celTypeForField(sf reflect.StructField) *types.Type {
 // Object wraps a Go value for use as a CEL object. The wrapper type is used as the
 // CEL object type so member functions dispatch to the wrapper.
 type Object[T any] struct {
-	Raw T
+	Raw     T
+	celType *types.Type
 }
 
 // NewObject returns a CEL wrapper for val and its CEL object type.
 func NewObject[T any](val T) (*Object[T], *types.Type) {
 	// Use the wrapper type as the CEL object type so member dispatch passes the
 	// wrapper (matching tests which assert *Object[T]).
-	return &Object[T]{Raw: val}, cel.ObjectType(wrapperTypeName[T](), traits.ReceiverType)
+	t := cel.ObjectType(wrapperTypeName[T](), traits.ReceiverType)
+	return &Object[T]{Raw: val, celType: t}, t
 }
 
 // ConvertToNative returns the underlying Go value when typeDesc matches the wrapped type.
@@ -139,6 +141,9 @@ func (o *Object[T]) Equal(other ref.Val) ref.Val {
 
 // Type returns the CEL type of the wrapper.
 func (o *Object[T]) Type() ref.Type {
+	if o.celType != nil {
+		return o.celType
+	}
 	return cel.ObjectType(wrapperTypeName[T](), traits.ReceiverType)
 }
 
@@ -154,6 +159,7 @@ func (o *Object[T]) Value() any {
 type dynObject struct {
 	Raw      any
 	typeName string
+	celType  *types.Type
 }
 
 func (o *dynObject) ConvertToNative(typeDesc reflect.Type) (any, error) {
@@ -178,6 +184,9 @@ func (o *dynObject) Equal(other ref.Val) ref.Val {
 }
 
 func (o *dynObject) Type() ref.Type {
+	if o.celType != nil {
+		return o.celType
+	}
 	return cel.ObjectType(o.typeName, traits.ReceiverType)
 }
 
@@ -380,14 +389,16 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 			if _, exists := fields[nestedFieldName]; !exists {
 				// Capture for closures
 				fullPath := ft.Name
+				parts := strings.Split(fullPath, ".")
+				nestedCelType := cel.ObjectType(nestedTypeName, traits.ReceiverType)
 				fields[nestedFieldName] = &types.FieldType{
-					Type: cel.ObjectType(nestedTypeName, traits.ReceiverType),
+					Type: nestedCelType,
 					IsSet: func(target any) bool {
 						x := extractRawValue(target)
 						if !x.IsValid() {
 							return false
 						}
-						f := getNestedField(x, fullPath)
+						f := getNestedField(x, parts)
 						if !f.IsValid() {
 							return false
 						}
@@ -402,7 +413,7 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 						if !x.IsValid() {
 							return nil, fmt.Errorf("field %s not found", fullPath)
 						}
-						f := getNestedField(x, fullPath)
+						f := getNestedField(x, parts)
 						if !f.IsValid() {
 							return nil, fmt.Errorf("field %s not found", fullPath)
 						}
@@ -418,7 +429,7 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 								fv = newPtr
 							}
 						}
-						return &dynObject{Raw: fv.Interface(), typeName: nestedTypeName}, nil
+						return &dynObject{Raw: fv.Interface(), typeName: nestedTypeName, celType: nestedCelType}, nil
 					},
 				}
 			}
@@ -433,6 +444,7 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 
 		// Primitive / non-struct field at this level.
 		fullPath := ft.Name
+		parts := strings.Split(fullPath, ".")
 		name := toSnakeCase(ft.Name)
 
 		sf := ft // capture for closure
@@ -447,7 +459,7 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 				if !x.IsValid() {
 					return false
 				}
-				f := getNestedField(x, fullPath)
+				f := getNestedField(x, parts)
 				if !f.IsValid() {
 					return false
 				}
@@ -458,11 +470,14 @@ func processImmediateFields(fields map[string]*types.FieldType, v reflect.Value)
 				if !x.IsValid() {
 					return nil, fmt.Errorf("field %s not found", fullPath)
 				}
-				f := getNestedField(x, fullPath)
+				f := getNestedField(x, parts)
 				if !f.IsValid() {
 					return nil, fmt.Errorf("field %s not found", fullPath)
 				}
 				if v, ok := normalizeForCEL(f); ok {
+					return v, nil
+				}
+				if v, ok := wrapForCEL(f); ok {
 					return v, nil
 				}
 				return f.Interface(), nil
@@ -492,6 +507,7 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 
 		// Build the reflection path like "Nested.Field".
 		fullPath := prefix + "." + ft.Name
+		parts := strings.Split(fullPath, ".")
 		// Promote to parent level name for anonymous embedding.
 		name := toSnakeCase(ft.Name)
 
@@ -509,14 +525,16 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 
 			if _, exists := fields[nestedFieldName]; !exists {
 				fullPath := prefix + "." + ft.Name
+				parts := strings.Split(fullPath, ".")
+				nestedCelType := cel.ObjectType(nestedTypeName, traits.ReceiverType)
 				fields[nestedFieldName] = &types.FieldType{
-					Type: cel.ObjectType(nestedTypeName, traits.ReceiverType),
+					Type: nestedCelType,
 					IsSet: func(target any) bool {
 						x := extractRawValue(target)
 						if !x.IsValid() {
 							return false
 						}
-						f := getNestedField(x, fullPath)
+						f := getNestedField(x, parts)
 						if !f.IsValid() {
 							return false
 						}
@@ -530,7 +548,7 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 						if !x.IsValid() {
 							return nil, fmt.Errorf("field %s not found", fullPath)
 						}
-						f := getNestedField(x, fullPath)
+						f := getNestedField(x, parts)
 						if !f.IsValid() {
 							return nil, fmt.Errorf("field %s not found", fullPath)
 						}
@@ -544,7 +562,7 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 								fv = newPtr
 							}
 						}
-						return &dynObject{Raw: fv.Interface(), typeName: nestedTypeName}, nil
+						return &dynObject{Raw: fv.Interface(), typeName: nestedTypeName, celType: nestedCelType}, nil
 					},
 				}
 			}
@@ -576,7 +594,7 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 				if !x.IsValid() {
 					return false
 				}
-				f := getNestedField(x, fullPath)
+				f := getNestedField(x, parts)
 				if !f.IsValid() {
 					return false
 				}
@@ -587,11 +605,14 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 				if !x.IsValid() {
 					return nil, fmt.Errorf("field %s not found", fullPath)
 				}
-				f := getNestedField(x, fullPath)
+				f := getNestedField(x, parts)
 				if !f.IsValid() {
 					return nil, fmt.Errorf("field %s not found", fullPath)
 				}
 				if v, ok := normalizeForCEL(f); ok {
+					return v, nil
+				}
+				if v, ok := wrapForCEL(f); ok {
 					return v, nil
 				}
 				return f.Interface(), nil
@@ -600,10 +621,10 @@ func processPromotedFields(fields map[string]*types.FieldType, v reflect.Value, 
 	}
 }
 
-// getNestedField returns the value at path (e.g., "Parent.Child.Field") within v,
-// following pointers as needed. It returns an invalid reflect.Value if the path
-// cannot be resolved to a struct field.
-func getNestedField(v reflect.Value, path string) reflect.Value {
+// getNestedField returns the value at the given path parts (e.g., ["Parent","Child","Field"])
+// within v, following pointers as needed. It returns an invalid reflect.Value if
+// the path cannot be resolved to a struct field.
+func getNestedField(v reflect.Value, parts []string) reflect.Value {
 	if v.Kind() == reflect.Interface {
 		if v.IsNil() {
 			return reflect.Value{}
@@ -613,7 +634,7 @@ func getNestedField(v reflect.Value, path string) reflect.Value {
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
-	for _, part := range strings.Split(path, ".") {
+	for _, part := range parts {
 		if v.Kind() == reflect.Interface {
 			if v.IsNil() {
 				return reflect.Value{}
@@ -645,6 +666,24 @@ func normalizeForCEL(fv reflect.Value) (any, bool) {
 	// *time.Time
 	if fv.Kind() == reflect.Ptr && fv.Elem().IsValid() && fv.Elem().Type() == goTimeType {
 		return types.Timestamp{Time: fv.Elem().Interface().(time.Time)}, true
+	}
+	return nil, false
+}
+
+// wrapForCEL wraps a primitive reflect.Value as its corresponding cel-go ref.Val type.
+// Returns (nil, false) for non-primitive kinds.
+func wrapForCEL(f reflect.Value) (any, bool) {
+	switch f.Kind() {
+	case reflect.String:
+		return types.String(f.String()), true
+	case reflect.Bool:
+		return types.Bool(f.Bool()), true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return types.Int(f.Int()), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return types.Uint(f.Uint()), true
+	case reflect.Float32, reflect.Float64:
+		return types.Double(f.Float()), true
 	}
 	return nil, false
 }
